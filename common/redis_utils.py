@@ -1,7 +1,13 @@
 import aioredis
-from tenacity import retry, stop_after_attempt, retry_if_exception_type, wait_random_exponential
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    retry_if_exception_type,
+    wait_random_exponential,
+)
 import logging
 from redis import RedisError
+
 
 def log_retry_info(retry_state):
     """
@@ -26,21 +32,23 @@ def log_retry_info(retry_state):
     logger = logging.getLogger(__name__)
 
     if retry_state:
-        logger.info("Redis connection failed. Retrying in (%d-%d)s. Attempt %d",
-                    retry_state.retry_object.wait.min,
-                    retry_state.retry_object.wait.max,
-                    retry_state.attempt_number,
-                    )
+        logger.info(
+            "Redis connection failed. Retrying in (%d-%d)s. Attempt %d",
+            retry_state.retry_object.wait.min,
+            retry_state.retry_object.wait.max,
+            retry_state.attempt_number,
+        )
     else:
-        logger.warning("Retry state or next_action is None. Unable to log retry information.")
-
+        logger.warning(
+            "Retry state or next_action is None. Unable to log retry information."
+        )
 
 
 @retry(
     stop=stop_after_attempt(3),
     retry=retry_if_exception_type(ConnectionRefusedError),
     wait=wait_random_exponential(min=5, max=20),
-    after=log_retry_info
+    after=log_retry_info,
 )
 async def connect_to_redis(config):
     """
@@ -58,19 +66,13 @@ async def connect_to_redis(config):
     a PING command. In case of a refused connection, it raises a ConnectionRefusedError.
     For any other unexpected errors, a generic Exception is raised with an associated error message.
     """
-    host, port = config['host'], config['port']
+    host, port = config["host"], config["port"]
     redis = None
-    try:
-        redis = await aioredis.create_redis_pool((host, port))
-        if await redis.execute("PING"):
-            logging.info("Connected to Redis successfully. ")
-            return redis
-    except ConnectionRefusedError as e:
-        logging.error(f"ConnectionRefusedError: {e}")
-        return None
-    except Exception as e:
-        logging.error(f"Unexpected error occurred: {e}")
-        return None
+    redis = await aioredis.create_redis_pool((host, port))
+    result = await redis.execute("PING")
+    if result:
+        logging.info("Connected to Redis successfully. ")
+        return redis
 
 
 async def save_to_redis(redis, redis_key, data):
@@ -108,5 +110,5 @@ async def save_to_redis(redis, redis_key, data):
         logging.error(f'Error setting key "{redis_key}" in Redis: {e}')
         return False
     except Exception as e:
-        logging.error(f'Unexpected error: {e}')
+        logging.error(f"Unexpected error: {e}")
         return False
