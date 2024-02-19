@@ -1,48 +1,49 @@
+import aioredis
 import pytest
 import logging
-import asyncio
-import aioredis
+
+from tenacity import RetryError
 from unittest.mock import AsyncMock, MagicMock, patch
 from ..redis_utils import connect_to_redis, save_to_redis, log_retry_info
 
 
 @pytest.fixture
 def redis_config():
-    return {'host': 'localhost', 'port': 6379}
+    return {"host": "localhost", "port": 6379}
 
 
 @pytest.fixture
 def wrong_redis_config():
-    return {'host': '8.8.8.8', 'port': 80}
+    return {"host": "8.8.8.8", "port": 80}
 
 
 @pytest.fixture
 def successful_redis_pool():
-    pool_mock = MagicMock()
-    ping_mock = pool_mock.execute.return_value = asyncio.Future()
-    ping_mock.set_result(b'PONG')
+    pool_mock = AsyncMock()
+    pool_mock.return_value.execute.return_value = b"PONG"
     return pool_mock
 
 
 @pytest.fixture
 def failed_redis_pool():
-    pool_mock = MagicMock()
-    pool_mock.execute.side_effect = ConnectionRefusedError
+    pool_mock = AsyncMock()
+    pool_mock.return_value.execute.return_value = None
+    pool_mock.return_value.execute.side_effect = ConnectionRefusedError()
     return pool_mock
 
 
-pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_connect_to_redis_successful(redis_config, successful_redis_pool):
     with patch("aioredis.create_redis_pool", successful_redis_pool):
         redis = await connect_to_redis(redis_config)
-        assert redis is not None
+    assert redis is not None
 
 
 @pytest.mark.asyncio
 async def test_connect_to_redis_failure(wrong_redis_config, failed_redis_pool):
     with patch("aioredis.create_redis_pool", failed_redis_pool):
-            redis = await connect_to_redis(wrong_redis_config)
-    assert redis is None
+        with pytest.raises(RetryError):
+            await connect_to_redis(wrong_redis_config)
 
 
 @pytest.mark.asyncio
@@ -73,7 +74,9 @@ def test_log_retry_info(caplog):
         retry_state_mock.retry_object.wait.max = 60
         retry_state_mock.attempt_number = 2
         log_retry_info(retry_state_mock)
-        assert "Redis connection failed. Retrying in (5-60)s. Attempt 2" in caplog.messages
+        assert (
+            "Redis connection failed. Retrying in (5-60)s. Attempt 2" in caplog.messages
+        )
         assert caplog.records  # Ensure there are log records
         assert caplog.records[0].levelno == logging.INFO
         assert "Redis connection failed. Retrying in (5-60)s. Attempt 2" in caplog.text
@@ -81,4 +84,7 @@ def test_log_retry_info(caplog):
 
 def test_log_retry_info_no_retry_state(caplog):
     log_retry_info(None)
-    assert "Retry state or next_action is None. Unable to log retry information." in caplog.text
+    assert (
+        "Retry state or next_action is None. Unable to log retry information."
+        in caplog.text
+    )
